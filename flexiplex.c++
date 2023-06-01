@@ -221,13 +221,16 @@ Barcode get_barcode(string & seq,
     search_pattern.umi_seq.length(),
     search_pattern.polyA.length()
   };
+  std::partial_sum(subpattern_lengths.begin(), subpattern_lengths.end(), subpattern_lengths.begin());
 
   vector<int> read_to_subpatterns = {0, 0, 0, 0};
-  std::partial_sum(subpattern_lengths.begin(), subpattern_lengths.end(), subpattern_lengths.begin());
-  // reset index
-  i_read = barcode.flank_start;
-  i_pattern = 0;
+
+  // initialise pointers
+  int i_read = barcode.flank_start;
+  int i_pattern = 0;
   int i_subpattern = 0;
+
+  // walk through edlib aligment
   for (int i = 0; i < result.alignmentLength; ++i) {
     int value = static_cast<int>(result.alignment[i]);
     if (value != 1) {
@@ -242,12 +245,6 @@ Barcode get_barcode(string & seq,
     }
   }
 
- // for (int i = barcode.flank_start; i < barcode.flank_end; i++) {
- //   if (std::find(read_to_subpatterns.begin(), read_to_subpatterns.end(), i) != read_to_subpatterns.end()) {
- //     std::cerr << std::endl;
- //   }
- //   std::cerr << (char) seq[i];
- // }
   std::cerr << std::endl << std::endl;
   edlibFreeAlignResult(result);
   

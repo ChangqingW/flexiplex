@@ -1,8 +1,5 @@
 # flexiplex
 The Flexible Demultiplexer
 
-For documentation visit [https://davidsongroup.github.io/flexiplex/](https://davidsongroup.github.io/flexiplex/)
-
-To compile type "make"
-
-For usage information type "./flexiplex -h"
+This is the Rcpp version of flexiplex.  
+Please vistion the main repository at [DavidsonGroup/flexiplex](https://github.com/DavidsonGroup/flexiplex) for the standard flexiplex release.

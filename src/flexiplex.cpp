@@ -21,7 +21,7 @@
 #include <filesystem>
 // [[Rcpp::plugins(cpp17)]]
 
-#include "edlib.h"
+#include "./utility/edlib-1.2.7/edlib.h"
 
 
 const static std::string VERSION="0.96.2";
@@ -354,6 +354,7 @@ void search_read(std::vector<SearchResult> & reads, std::unordered_set<std::stri
   }
 }
 
+//' @export
 // [[Rcpp::export]]
 int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_readid, int max_bc_editdistance,
               int max_flank_editdistance, Rcpp::List pattern, Rcpp::String reads_out, Rcpp::String stats_out,

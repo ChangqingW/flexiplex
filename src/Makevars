@@ -1,0 +1,27 @@
+## This file uses GNU make syntax $(shell ...) so we need to
+## have "SystemRequirements: GNU make" in the DESCRIPTION file.
+
+CXX_STD = CXX17
+
+## The subdirectory paths which contain C files
+CFILES = $(wildcard \
+    *.c \
+    **/*.c \
+    **/*/*.c \
+)
+
+## The subdirectory paths which contain C++ files
+CPPFILES = $(wildcard \
+    *.cpp \
+    **/*.cpp \
+    **/*/*.cpp \
+)
+
+## Combine the two sets of files
+FILES = $(CFILES) $(CPPFILES)
+
+SOURCES = $(FILES)
+OBJECTS = $(CPPFILES:.cpp=.o) $(CFILES:.c=.o)
+
+PKG_CPPFLAGS = -pthread
+PKG_LIBS = -pthread

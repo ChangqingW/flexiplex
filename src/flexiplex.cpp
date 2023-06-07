@@ -289,7 +289,7 @@ void print_line(const std::string& id, const std::string& read, const std::strin
 //print fastq or fasta lines..
 void print_read(const std::string &read_id, const std::string &read,
                 const std::string &qual, const std::vector<Barcode> &vec_bc,
-                const std::string &outname, bool split,
+                std::ofstream &outstream, 
                 std::unordered_set<std::string> &found_barcodes,
                 bool trim_barcodes) {
   // loop over the barcodes found... usually will just be one
@@ -321,23 +321,7 @@ void print_read(const std::string &read_id, const std::string &read,
       b = vec_bc.size(); // force loop to exit after this iteration
     }
 
-    std::filesystem::path outputPath(outname);
-    if (split) { // to a file if splitting by barcode
-      outputPath += "_" + barcode;
-    }
-    outputPath += (qual.empty() ? ".fasta" : ".fastq");
-
-    std::ofstream outstream(outputPath, std::ios_base::app);
-    if (outstream) {
-      print_line(new_read_id, read_new, qual_new, outstream);
-      outstream.close();
-    } else {
-      Rcpp::Rcerr << "Failed to open output file: " << outputPath << "\n";
-    }
-
-    // if (split && found_barcodes.insert(barcode).second) {
-    //   std::filesystem::remove(outputPath);
-    // }
+    print_line(new_read_id, read_new, qual_new, outstream);
   }
 }
 
@@ -362,7 +346,6 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
   std::ios_base::sync_with_stdio(false);
 
   // TODO: include as function parameters
-  bool split_file_by_barcode=false; //(s)
   bool remove_barcodes=true;
   search_pattern.primer = "CTACACGACGCTCTTCCGATCT"; //(p)
   search_pattern.polyA = std::string(9,'T'); //(T)
@@ -401,20 +384,12 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
     Rcpp::Rcout << "Number of known barcodes: " << known_barcodes.size() << "\n";
   }
 
-  if (split_file_by_barcode) {
-    if(known_barcodes.size()>50){
-      Rcpp::Rcout << "Too many barcodes to split into separate files\n";
-	    split_file_by_barcode=false;
-  } else {
-      Rcpp::Rcout << "Split read output into separate files by barcode\n";
-    }
-  }
-
   std::ifstream ifreads_in(reads_in);
   if(!(ifreads_in.is_open())){
-    Rcpp::Rcout << "Unable to open file " << reads_in.get_cstring() << "\n";
-    exit(1);
+    Rcpp::stop(std::string("Unable to open file ") + reads_in.get_cstring());
   }
+
+  std::ofstream outstream(reads_out, std::ios_base::app);
 
   /********* FIND BARCODE IN READS ********/
   std::string sequence;
@@ -436,7 +411,7 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
     if(read_id_line[0]=='>'){ is_fastq=false;
     } else if (read_id_line[0] == '@'){ //fasta
     } else {
-      Rcpp::Rcout << "Unknown read format... exiting" << "\n"; exit(1);
+      Rcpp::stop("Unknown read format... exiting");
     }
   }
   
@@ -510,11 +485,11 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
 	  print_stats(sr_v[t][r].read_id, sr_v[t][r].vec_bc_rev, out_stat_file);
 	  
 	  print_read(sr_v[t][r].read_id+"_+",sr_v[t][r].line,sr_v[t][r].qual_scores,sr_v[t][r].vec_bc_for,
-		     reads_out,split_file_by_barcode,found_barcodes,remove_barcodes);
+		     outstream,found_barcodes,remove_barcodes);
 	  reverse(sr_v[t][r].qual_scores.begin(),sr_v[t][r].qual_scores.end());
 	  if(remove_barcodes || sr_v[t][r].vec_bc_for.size()==0) //case we just want to print read once if multiple bc found.
 	    print_read(sr_v[t][r].read_id+"_-",sr_v[t][r].rev_line,sr_v[t][r].qual_scores,sr_v[t][r].vec_bc_rev,
-		       reads_out,split_file_by_barcode,found_barcodes,remove_barcodes);
+		       outstream,found_barcodes,remove_barcodes);
 	}
       }
     }

@@ -161,7 +161,7 @@ Barcode get_barcode(const std::string & seq,
   } //fill in info about found primer and polyT location
   barcode.flank_editd=result.editDistance;
   barcode.flank_start=result.startLocations[0];
-  barcode.flank_end=result.endLocations[0];
+  barcode.flank_end=seq.find_first_not_of('T', result.endLocations[0]);
 
   // Extract sub-patterns from aligment directly
   std::vector<long unsigned int> subpattern_lengths = {
@@ -251,7 +251,12 @@ std::vector<Barcode> big_barcode_search(const std::string & sequence,const std::
   if (!return_vec.empty()) {
     std::string masked_sequence = sequence;
     for(const auto &barcode : return_vec){
-      int flank_length = barcode.flank_end - barcode.flank_start;
+      int flank_length;
+      if (barcode.flank_end == std::string::npos) {
+        flank_length = masked_sequence.length() - 1 - barcode.flank_start;
+      } else {
+        flank_length = barcode.flank_end - barcode.flank_start;
+      }
       masked_sequence.replace(barcode.flank_start, flank_length,std::string(flank_length,'X'));
     } //recursively call this function until no more barcodes are found
   std::vector<Barcode> masked_res = big_barcode_search(masked_sequence,known_barcodes,max_flank_editd,max_editd);
@@ -268,7 +273,8 @@ void print_stats(const std::string& read_id, const std::vector<Barcode>& vec_bc,
                << barcode.barcode << "\t"
 	             << barcode.flank_editd << "\t"
 	             << barcode.editd << "\t"
-	             << barcode.umi << '\n';
+	             << barcode.umi << "\t"
+ 	             << (barcode.flank_end == std::string::npos ? "True" : "False") << "\n";
   }
 }
 
@@ -303,6 +309,9 @@ void print_read(const std::string &read_id, const std::string &read,
         barcode + "_" + vec_bc[b].umi + "#" + read_id + ss.str();
 
     // work out the start and end base in case multiple barcodes
+    if (vec_bc.at(b).flank_end == std::string::npos) {
+      continue;
+    }
     int read_start = vec_bc[b].flank_end;
     int read_length = read.length() - read_start;
     for (int f = 0; f < vec_bc.size(); f++) {
@@ -401,7 +410,7 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
 
   if(known_barcodes.size()>0){
     out_stat_file.open(stats_out);
-    out_stat_file << "Read\tCellBarcode\tFlankEditDist\tBarcodeEditDist\tUMI"<<"\n";
+    out_stat_file << "Read\tCellBarcode\tFlankEditDist\tBarcodeEditDist\tUMI\tTooShort"<<"\n";
   }
   Rcpp::Rcout << "Searching for barcodes..." << "\n";
   bool is_fastq=true;

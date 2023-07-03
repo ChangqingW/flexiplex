@@ -347,20 +347,48 @@ void search_read(std::vector<SearchResult> & reads, std::unordered_set<std::stri
   }
 }
 
+//' Rcpp port of flexiplex
+//' 
+//' @description demultiplex reads with flexiplex, for detailed description, see
+//' documentation for the original flexiplex: https://davidsongroup.github.io/flexiplex
+//'
+//' @param reads_in Input FASTQ or FASTA file
+//' @param barcodes_file barcode allow-list file
+//' @param bc_as_readid bool, whether to add the demultiplexed barcode to the read ID field
+//' @param max_bc_editdistance max edit distance for barcode
+//' @param max_flank_editdistance max edit distance for the flanking sequences
+//' @param pattern StringVector defining the barcode structure, see [find_barcode]
+//' @param reads_out output file for demultiplexed reads
+//' @param stats_out output file for demultiplexed stats
+//' @param n_threads number of threads to be used during demultiplexing
+//' @param bc_out WIP
 //' @export
 // [[Rcpp::export]]
 int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_readid, int max_bc_editdistance,
-              int max_flank_editdistance, Rcpp::List pattern, Rcpp::String reads_out, Rcpp::String stats_out,
-              Rcpp::String bc_out, int n_threads){
+              int max_flank_editdistance, Rcpp::StringVector pattern, Rcpp::String reads_out,
+              Rcpp::String stats_out, Rcpp::String bc_out, int n_threads){
   std::ios_base::sync_with_stdio(false);
 
-  // TODO: include as function parameters
   bool remove_barcodes=true;
   search_pattern.primer = "CTACACGACGCTCTTCCGATCT"; //(p)
   search_pattern.polyA = std::string(9,'T'); //(T)
   search_pattern.umi_seq = std::string(12,'?'); //(length u)
   search_pattern.temp_barcode = std::string(16,'?'); //(length b)
-  
+
+  for (auto key: std::vector<std::string>{"primer", "polyT", "umi_seq", "barcode_seq"}) {
+    if (pattern.containsElementNamed(key.c_str())) {
+      if (key == "primer") {
+        search_pattern.primer = pattern[key];
+      } else if (key == "polyT") {
+        search_pattern.polyA = pattern[key];
+      } else if (key == "umi_seq") {
+        search_pattern.umi_seq = pattern[key];
+      } else if (key == "barcode_seq") {
+        search_pattern.temp_barcode = pattern[key];
+      }
+    }
+  }
+ 
   Rcpp::Rcout << "FLEXIPLEX " << VERSION << "\n";
   Rcpp::Rcout << "Setting max barcode edit distance to "<< max_bc_editdistance << "\n";
   Rcpp::Rcout << "Setting max flanking sequence edit distance to "<< max_flank_editdistance << "\n";
@@ -409,8 +437,12 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file, bool bc_as_read
   std::ofstream out_stat_file;
 
   if(known_barcodes.size()>0){
-    out_stat_file.open(stats_out);
-    out_stat_file << "Read\tCellBarcode\tFlankEditDist\tBarcodeEditDist\tUMI\tTooShort"<<"\n";
+    if (std::filesystem::exists(stats_out.get_cstring())) {
+      out_stat_file.open(stats_out, std::ios_base::app);
+    } else {
+      out_stat_file.open(stats_out);
+      out_stat_file << "Read\tCellBarcode\tFlankEditDist\tBarcodeEditDist\tUMI\tTooShort"<<"\n";
+    }
   }
   Rcpp::Rcout << "Searching for barcodes..." << "\n";
   bool is_fastq=true;

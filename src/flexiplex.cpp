@@ -22,8 +22,15 @@
 // [[Rcpp::plugins(cpp17)]]
 
 #include "./utility/edlib-1.2.7/edlib.h"
+#include "htslib/kseq.h"
+#include "zlib.h"
 
 const static std::string VERSION = "0.96.2";
+
+#ifndef GZKSEQ
+#define GZKSEQ
+KSEQ_INIT(gzFile, gzread)
+#endif
 
 // compliment nucleotides - used to reverse compliment string
 char compliment(char &c) {
@@ -381,12 +388,12 @@ void search_read(std::vector<SearchResult> &reads,
 //'
 //' @description demultiplex reads with flexiplex, for detailed description, see
 //' documentation for the original flexiplex:
-//https://davidsongroup.github.io/flexiplex
+// https://davidsongroup.github.io/flexiplex
 //'
 //' @param reads_in Input FASTQ or FASTA file
 //' @param barcodes_file barcode allow-list file
 //' @param bc_as_readid bool, whether to add the demultiplexed barcode to the
-//read ID field ' @param max_bc_editdistance max edit distance for barcode '
+// read ID field ' @param max_bc_editdistance max edit distance for barcode '
 //@param max_flank_editdistance max edit distance for the flanking sequences '
 //@param pattern StringVector defining the barcode structure, see [find_barcode]
 //' @param reads_out output file for demultiplexed reads
@@ -461,10 +468,23 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
                 << "\n";
   }
 
-  std::ifstream ifreads_in(reads_in);
-  if (!(ifreads_in.is_open())) {
-    Rcpp::stop(std::string("Unable to open file ") + reads_in.get_cstring());
+  gzFile gz_reads_in = gzopen(reads_in.get_cstring(), "r");
+  kseq_t *kseq;
+  int kseq_len;
+  bool is_fastq = false;
+  if (!gz_reads_in) {
+    Rcpp::stop("Unable to open reads_in file");
+  } else {
+    kseq = kseq_init(gz_reads_in);
+    kseq_len = kseq_read(kseq);
+    if (!kseq_len > 0) {
+      Rcpp::stop("Unknown read format");
+    } else {
+      is_fastq = (bool)kseq->qual.s;
+    }
   }
+  gzrewind(gz_reads_in);
+  kseq = kseq_init(gz_reads_in);
 
   std::ofstream outstream(reads_out, std::ios_base::app);
 
@@ -488,20 +508,9 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
   }
   Rcpp::Rcout << "Searching for barcodes..."
               << "\n";
-  bool is_fastq = true;
   std::unordered_map<std::string, int> barcode_counts;
-  std::string read_id_line;
-  if (getline(ifreads_in, read_id_line)) { // check the first line for file type
-    if (read_id_line[0] == '>') {
-      is_fastq = false;
-    } else if (read_id_line[0] == '@') { // fasta
-    } else {
-      Rcpp::stop("Unknown read format... exiting");
-    }
-  }
 
-  std::string line;
-  while (getline(ifreads_in, line)) {
+  while (kseq_len > 0) {
     const int buffer_size = 2000; // number of reads to pass to one thread.
     std::vector<std::vector<SearchResult>> sr_v(n_threads);
     for (int i = 0; i < n_threads; i++)
@@ -510,25 +519,25 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
     for (int t = 0; t < n_threads;
          t++) { // get n_threads*buffer number or reads..
       for (int b = 0; b < buffer_size; b++) {
+        kseq_len = kseq_read(kseq);
+        if (kseq_len <= 0) {
+          sr_v[t].resize(b);
+          for (int t2 = t + 1; t2 < n_threads; t2++) {
+            sr_v[t2].resize(0);
+          }
+          if (b > 0) {
+            threads[t] =
+                std::thread(search_read, ref(sr_v[t]), ref(known_barcodes),
+                            max_flank_editdistance, max_bc_editdistance);
+          }
+          goto print_result; // advance the line
+        }
         SearchResult &sr = sr_v[t][b];
-        sr.line = line;
-        std::string read_id;
-        // sr.read_id= read_id_line.substr(1,read_id_line.find_first_not_of("
-        // \t")-1);
-        std::istringstream line_stream(read_id_line);
-        line_stream >> sr.read_id;
-        sr.read_id.erase(0, 1);
+        sr.line = kseq->seq.s;
+        sr.read_id = kseq->name.s;
 
-        //      string qual_scores="";
-        if (!is_fastq) { // fastq (account for multi-lines per read)
-          std::string buffer_string;
-          while (getline(ifreads_in, buffer_string) && buffer_string[0] != '>')
-            sr.line += buffer_string;
-          read_id_line = buffer_string;
-        } else { // fastq (get quality scores)
-          for (int s = 0; s < 2; s++)
-            getline(ifreads_in, sr.qual_scores);
-          getline(ifreads_in, read_id_line);
+        if (is_fastq) { // fastq (account for multi-lines per read)
+          sr.qual_scores = kseq->qual.s;
         }
 
         r_count++; // progress counter
@@ -536,21 +545,6 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
           Rcpp::Rcout << r_count / ((double)1000000)
                       << " million reads processed.."
                       << "\n";
-
-        // this is quite ugly, must be a better way to do this..
-        if (b == buffer_size - 1 && t == n_threads - 1) {
-          break; // if it's the last in the chunk don't getline as this happens
-                 // in the while statement
-        } else if (!getline(ifreads_in,
-                            line)) { // case we are at the end of the reads.
-          sr_v[t].resize(b + 1);
-          threads[t] =
-              std::thread(search_read, ref(sr_v[t]), ref(known_barcodes),
-                          max_flank_editdistance, max_bc_editdistance);
-          for (int t2 = t + 1; t2 < n_threads; t2++)
-            sr_v[t2].resize(0);
-          goto print_result; // advance the line
-        }
       }
       // send reads to the thread
       threads[t] = std::thread(search_read, ref(sr_v[t]), ref(known_barcodes),
@@ -597,7 +591,8 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
       }
     }
   }
-  ifreads_in.close();
+  kseq_destroy(kseq);
+  gzclose(gz_reads_in);
 
   Rcpp::Rcout << "Number of reads processed: " << r_count << "\n";
   Rcpp::Rcout << "Number of reads where a barcode was found: " << bc_count

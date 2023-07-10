@@ -23,5 +23,15 @@ FILES = $(CFILES) $(CPPFILES)
 SOURCES = $(FILES)
 OBJECTS = $(CPPFILES:.cpp=.o) $(CFILES:.c=.o)
 
-PKG_CPPFLAGS = -pthread
-PKG_LIBS = -pthread
+RHTSLIB_LIBS=$(shell "${R_HOME}/bin${R_ARCH_BIN}/Rscript" -e \
+    'Rhtslib::pkgconfig("PKG_LIBS")')
+RHTSLIB_CPPFLAGS=$(shell "${R_HOME}/bin${R_ARCH_BIN}/Rscript" -e \
+    'Rhtslib::pkgconfig("PKG_CPPFLAGS")')
+
+ifeq ($(shell test -e /usr/bin/tar && test -e /usr/bin/sha1sum \
+    && test -e /usr/bin/cut && echo 1),1)
+    HASH_FLAG = -DGIT_HASH=\"$(shell tar cvf - . | sha1sum | cut -d' ' -f1)\"
+endif
+
+PKG_CPPFLAGS = -pthread $(RHTSLIB_LIBS) $(HASH_FLAG)
+PKG_LIBS = -pthread $(RHTSLIB_CPPFLAGS)

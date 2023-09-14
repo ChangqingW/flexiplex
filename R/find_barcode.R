@@ -27,8 +27,8 @@ find_barcode <- function(
     fastq, barcodes_file, max_bc_editdistance = 2, max_flank_editdistance = 8,
     reads_out, stats_out, threads, pattern = c(
       primer = "CTACACGACGCTCTTCCGATCT",
-      BC = paste0(rep("?", 16), collapse = ""),
-      UMI = paste0(rep("?", 12), collapse = ""),
+      BC = paste0(rep("N", 16), collapse = ""),
+      UMI = paste0(rep("N", 12), collapse = ""),
       polyT = paste0(rep("T", 9), collapse = "")
     )) {
   if (file_test("-f", fastq)) {

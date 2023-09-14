@@ -152,10 +152,21 @@ Barcode get_barcode(
   barcode.unambiguous = false;
 
   // initialise edlib configuration
-  EdlibEqualityPair additionalEqualities[5] = {
-      {'?', 'A'}, {'?', 'C'}, {'?', 'G'}, {'?', 'T'}, {'?', 'N'}};
+  EdlibEqualityPair additionalEqualities[28] = {
+    {'R', 'A'}, {'R', 'G'},
+    {'K', 'G'}, {'K', 'T'},
+    {'S', 'G'}, {'S', 'C'},
+    {'Y', 'C'}, {'Y', 'T'},
+    {'M', 'A'}, {'M', 'C'},
+    {'W', 'A'}, {'W', 'T'},
+    {'B', 'C'}, {'B', 'G'}, {'B', 'T'},
+    {'H', 'A'}, {'H', 'C'}, {'H', 'T'},
+    {'N', 'A'}, {'N', 'C'}, {'N', 'G'}, {'N', 'T'},
+    {'D', 'A'}, {'D', 'G'}, {'D', 'T'},
+    {'V', 'A'}, {'V', 'C'}, {'V', 'G'}
+  };
   EdlibAlignConfig edlibConf = {flank_max_editd, EDLIB_MODE_HW, EDLIB_TASK_PATH,
-                                additionalEqualities, 5};
+                                additionalEqualities, 28};
 
   // search for primer and ployT (barcode and umi as wildcards)
   std::string search_string;

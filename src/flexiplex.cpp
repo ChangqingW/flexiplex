@@ -56,14 +56,6 @@ std::string reverse_compliment(const std::string &seq) {
   return rev_seq;
 }
 
-// Holds the search string patterns
-struct SearchSeq {
-  std::string primer;
-  std::string polyA;
-  std::string umi_seq;
-  std::string temp_barcode;
-} search_pattern;
-
 // Holds the found barcode and associated information
 struct Barcode {
   std::string barcode;
@@ -144,9 +136,11 @@ unsigned int edit_distance(const std::string &s1, const std::string &s2,
 // followed by a targeted search in the region for barcode Seaquence seearch is
 // performed using edlib
 
-Barcode get_barcode(const std::string &seq,
-                    const std::unordered_set<std::string> &known_barcodes,
-                    int flank_max_editd, int barcode_max_editd) {
+Barcode get_barcode(
+    const std::string &seq,
+    const std::unordered_set<std::string> &known_barcodes, int flank_max_editd,
+    int barcode_max_editd,
+    const std::vector<std::pair<std::string, std::string>> &search_pattern) {
 
   const int OFFSET =
       5; // wiggle room in bases of the expected barcode start site to search.
@@ -164,9 +158,10 @@ Barcode get_barcode(const std::string &seq,
                                 additionalEqualities, 5};
 
   // search for primer and ployT (barcode and umi as wildcards)
-  std::string search_string = search_pattern.primer +
-                              search_pattern.temp_barcode +
-                              search_pattern.umi_seq + search_pattern.polyA;
+  std::string search_string;
+  for (const auto &pair : search_pattern) {
+    search_string += pair.second;
+  }
   EdlibAlignResult result =
       edlibAlign(search_string.c_str(), search_string.length(), seq.c_str(),
                  seq.length(), edlibConf);
@@ -179,9 +174,10 @@ Barcode get_barcode(const std::string &seq,
   barcode.flank_end = seq.find_first_not_of('T', result.endLocations[0]);
 
   // Extract sub-patterns from aligment directly
-  std::vector<long unsigned int> subpattern_lengths = {
-      search_pattern.primer.length(), search_pattern.temp_barcode.length(),
-      search_pattern.umi_seq.length(), search_pattern.polyA.length()};
+  std::vector<long unsigned int> subpattern_lengths;
+  for (const auto &pair : search_pattern) {
+    subpattern_lengths.push_back(pair.second.length());
+  }
 
   std::vector<long unsigned int> subpattern_ends;
   subpattern_ends.resize(subpattern_lengths.size());
@@ -221,22 +217,56 @@ Barcode get_barcode(const std::string &seq,
   // if not checking against known list of barcodes, return sequence after the
   // primer also check for a perfect match straight up as this will save
   // computer later.
+
+  int bc_index = -1, umi_index = -1;
+  auto it_pattern =
+      std::find_if(search_pattern.begin(), search_pattern.end(),
+                   [](const std::pair<std::string, std::string> &pair) {
+                     return pair.first == "BC";
+                   });
+  if (it_pattern != search_pattern.end()) {
+    bc_index = std::distance(search_pattern.begin(), it_pattern);
+  } else {
+    // error
+  }
+  it_pattern =
+      std::find_if(search_pattern.begin(), search_pattern.end(),
+                   [](const std::pair<std::string, std::string> &pair) {
+                     return pair.first == "UMI";
+                   });
+  if (it_pattern != search_pattern.end()) {
+    umi_index = std::distance(search_pattern.begin(), it_pattern);
+  } else {
+    // error
+  }
+
   std::string exact_bc = seq.substr(
-      read_to_subpatterns[0], read_to_subpatterns[1] - read_to_subpatterns[0]);
+      read_to_subpatterns[bc_index == 0 ? barcode.flank_start : (bc_index - 1)],
+      read_to_subpatterns[bc_index] -
+          read_to_subpatterns[bc_index == 0 ? barcode.flank_start
+                                            : (bc_index - 1)]);
   if (known_barcodes.empty() ||
       (known_barcodes.find(exact_bc) != known_barcodes.end())) {
     barcode.barcode = exact_bc;
     barcode.editd = 0;
     barcode.unambiguous = true;
-    barcode.umi =
-        seq.substr(read_to_subpatterns[1], search_pattern.umi_seq.length());
+    if (umi_index == -1) {
+      barcode.umi = "";
+    } else {
+      barcode.umi =
+          seq.substr(read_to_subpatterns[umi_index == 0 ? barcode.flank_start
+                                                        : (umi_index - 1)],
+                     search_pattern[umi_index].second.length());
+    }
     return (barcode);
   }
 
   // otherwise widen our search space and the look for matches with errors
   std::string barcode_seq =
-      seq.substr(read_to_subpatterns[0] - OFFSET,
-                 search_pattern.temp_barcode.length() + 2 * OFFSET);
+      seq.substr(read_to_subpatterns[bc_index == 0 ? barcode.flank_start
+                                                   : (bc_index - 1)] -
+                     OFFSET,
+                 search_pattern[bc_index].second.length() + 2 * OFFSET);
 
   // iterate over all the known barcodes, checking each sequentially
   unsigned int editDistance;
@@ -251,9 +281,10 @@ Barcode get_barcode(const std::string &seq,
       barcode.unambiguous = true;
       barcode.editd = editDistance;
       barcode.barcode = known_bc;
-      barcode.umi = seq.substr(
-          read_to_subpatterns[0] - OFFSET + endDistance,
-          search_pattern.umi_seq.length()); // assumes no error in UMI seq.
+      barcode.umi =
+          seq.substr(read_to_subpatterns[0] - OFFSET + endDistance,
+                     search_pattern[umi_index]
+                         .second.length()); // assumes no error in UMI seq.
       if (editDistance == 0) { // if perfect match is found we're done.
         return (barcode);
       }
@@ -265,15 +296,16 @@ Barcode get_barcode(const std::string &seq,
 
 // search a read for one or more barcodes (parent function that calls
 // get_barcode)
-std::vector<Barcode>
-big_barcode_search(const std::string &sequence,
-                   const std::unordered_set<std::string> &known_barcodes,
-                   int max_flank_editd, int max_editd) {
+std::vector<Barcode> big_barcode_search(
+    const std::string &sequence,
+    const std::unordered_set<std::string> &known_barcodes, int max_flank_editd,
+    int max_editd,
+    const std::vector<std::pair<std::string, std::string>> &search_pattern) {
   std::vector<Barcode> return_vec; // vector of all the barcodes found
 
   // search for barcode
-  Barcode result =
-      get_barcode(sequence, known_barcodes, max_flank_editd, max_editd); //,ss);
+  Barcode result = get_barcode(sequence, known_barcodes, max_flank_editd,
+                               max_editd, search_pattern); //,ss);
   if (result.editd <= max_editd &&
       result.unambiguous) // add to return vector if edit distance small enough
     return_vec.emplace_back(result);
@@ -292,8 +324,9 @@ big_barcode_search(const std::string &sequence,
       masked_sequence.replace(barcode.flank_start, flank_length,
                               std::string(flank_length, 'X'));
     } // recursively call this function until no more barcodes are found
-    std::vector<Barcode> masked_res = big_barcode_search(
-        masked_sequence, known_barcodes, max_flank_editd, max_editd);
+    std::vector<Barcode> masked_res =
+        big_barcode_search(masked_sequence, known_barcodes, max_flank_editd,
+                           max_editd, search_pattern);
     return_vec.insert(return_vec.end(), masked_res.begin(),
                       masked_res.end()); // add to result
   }
@@ -369,37 +402,50 @@ void print_read(const std::string &read_id, const std::string &read,
 }
 
 // separated out from main so that this can be run with threads
-void search_read(std::vector<SearchResult> &reads,
-                 std::unordered_set<std::string> &known_barcodes,
-                 int flank_edit_distance, int edit_distance) {
+void search_read(
+    std::vector<SearchResult> &reads,
+    std::unordered_set<std::string> &known_barcodes, int flank_edit_distance,
+    int edit_distance,
+    const std::vector<std::pair<std::string, std::string>> &search_pattern) {
+
   for (auto &read : reads) {
     // forward search
-    read.vec_bc_for = big_barcode_search(read.line, known_barcodes,
-                                         flank_edit_distance, edit_distance);
+    read.vec_bc_for =
+        big_barcode_search(read.line, known_barcodes, flank_edit_distance,
+                           edit_distance, search_pattern);
 
     // Check the reverse compliment of the read
     read.rev_line = reverse_compliment(read.line);
-    read.vec_bc_rev = big_barcode_search(read.rev_line, known_barcodes,
-                                         flank_edit_distance, edit_distance);
+    read.vec_bc_rev =
+        big_barcode_search(read.rev_line, known_barcodes, flank_edit_distance,
+                           edit_distance, search_pattern);
   }
+}
+
+// file exists
+bool file_exists(const std::string &filename) {
+  std::ifstream infile(filename);
+  return infile.good();
 }
 
 //' Rcpp port of flexiplex
 //'
 //' @description demultiplex reads with flexiplex, for detailed description, see
 //' documentation for the original flexiplex:
-// https://davidsongroup.github.io/flexiplex
+//' https://davidsongroup.github.io/flexiplex
 //'
 //' @param reads_in Input FASTQ or FASTA file
 //' @param barcodes_file barcode allow-list file
 //' @param bc_as_readid bool, whether to add the demultiplexed barcode to the
-// read ID field ' @param max_bc_editdistance max edit distance for barcode '
-//@param max_flank_editdistance max edit distance for the flanking sequences '
-//@param pattern StringVector defining the barcode structure, see [find_barcode]
+//' read ID field 
+//' @param max_bc_editdistance max edit distance for barcode '
+//' @param max_flank_editdistance max edit distance for the flanking sequences '
+//' @param pattern StringVector defining the barcode structure, see [find_barcode]
 //' @param reads_out output file for demultiplexed reads
 //' @param stats_out output file for demultiplexed stats
 //' @param n_threads number of threads to be used during demultiplexing
 //' @param bc_out WIP
+//' @return integer return value. 0 represents normal return.
 //' @export
 // [[Rcpp::export]]
 int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
@@ -410,25 +456,20 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
   std::ios_base::sync_with_stdio(false);
 
   bool remove_barcodes = true;
-  search_pattern.primer = "CTACACGACGCTCTTCCGATCT";   //(p)
-  search_pattern.polyA = std::string(9, 'T');         //(T)
-  search_pattern.umi_seq = std::string(12, '?');      //(length u)
-  search_pattern.temp_barcode = std::string(16, '?'); //(length b)
 
-  for (auto key :
-       std::vector<std::string>{"primer", "polyT", "umi_seq", "barcode_seq"}) {
-    if (pattern.containsElementNamed(key.c_str())) {
-      if (key == "primer") {
-        search_pattern.primer = pattern[key];
-      } else if (key == "polyT") {
-        search_pattern.polyA = pattern[key];
-      } else if (key == "umi_seq") {
-        search_pattern.umi_seq = pattern[key];
-      } else if (key == "barcode_seq") {
-        search_pattern.temp_barcode = pattern[key];
-      }
-    }
+  std::vector<std::string> pattern_names = pattern.attr("names");
+  std::vector<std::pair<std::string, std::string>> search_pattern;
+  for (int i = 0; i < pattern.size(); i++) {
+    search_pattern.push_back(
+        std::make_pair(pattern_names[i], std::string(pattern(i))));
   }
+
+  // std::vector<std::pair<std::string, std::string>> search_pattern = {
+  //     {"primer", "CTACACGACGCTCTTCCGATCT"}, //(p)
+  //     {"BC", std::string(16, '?')},         //(length b)
+  //     {"UMI", std::string(12, '?')},        //(length u)
+  //     {"polyA", std::string(9, 'T')},       //(T)
+  // };
 
   Rcpp::Rcout << "FLEXIPLEX " << VERSION << "\n";
   Rcpp::Rcout << "Setting max barcode edit distance to " << max_bc_editdistance
@@ -439,6 +480,11 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
               << " replaced"
               << "\n";
   Rcpp::Rcout << "Setting number of threads to " << n_threads << "\n";
+
+  Rcpp::Rcout << "Search pattern: \n";
+  for (auto i : search_pattern) {
+    Rcpp::Rcout << i.first << ": " << i.second << "\n";
+  }
 
   // Set of known barcodes
   std::unordered_set<std::string> known_barcodes;
@@ -477,7 +523,7 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
   } else {
     kseq = kseq_init(gz_reads_in);
     kseq_len = kseq_read(kseq);
-    if (!kseq_len > 0) {
+    if (!(kseq_len > 0)) {
       Rcpp::stop("Unknown read format");
     } else {
       is_fastq = (bool)kseq->qual.s;
@@ -497,7 +543,7 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
   std::ofstream out_stat_file;
 
   if (known_barcodes.size() > 0) {
-    if (std::filesystem::exists(stats_out.get_cstring())) {
+    if (file_exists(stats_out.get_cstring())) {
       out_stat_file.open(stats_out, std::ios_base::app);
     } else {
       out_stat_file.open(stats_out);
@@ -528,7 +574,8 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
           if (b > 0) {
             threads[t] =
                 std::thread(search_read, ref(sr_v[t]), ref(known_barcodes),
-                            max_flank_editdistance, max_bc_editdistance);
+                            max_flank_editdistance, max_bc_editdistance,
+                            ref(search_pattern));
           }
           goto print_result; // advance the line
         }
@@ -548,7 +595,8 @@ int flexiplex(Rcpp::String reads_in, Rcpp::String barcodes_file,
       }
       // send reads to the thread
       threads[t] = std::thread(search_read, ref(sr_v[t]), ref(known_barcodes),
-                               max_flank_editdistance, max_bc_editdistance);
+                               max_flank_editdistance, max_bc_editdistance,
+                               ref(search_pattern));
     }
   print_result:
 

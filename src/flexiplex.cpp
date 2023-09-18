@@ -152,6 +152,7 @@ Barcode get_barcode(
   barcode.unambiguous = false;
 
   // initialise edlib configuration
+  // Use IUPAC codes
   EdlibEqualityPair additionalEqualities[28] = {
     {'R', 'A'}, {'R', 'G'},
     {'K', 'G'}, {'K', 'T'},
@@ -165,14 +166,16 @@ Barcode get_barcode(
     {'D', 'A'}, {'D', 'G'}, {'D', 'T'},
     {'V', 'A'}, {'V', 'C'}, {'V', 'G'}
   };
-  EdlibAlignConfig edlibConf = {flank_max_editd, EDLIB_MODE_HW, EDLIB_TASK_PATH,
+EdlibAlignConfig edlibConf = {flank_max_editd, EDLIB_MODE_HW, EDLIB_TASK_PATH,
                                 additionalEqualities, 28};
 
-  // search for primer and ployT (barcode and umi as wildcards)
+  // concatenate patterns in search_pattern in insertion order
   std::string search_string;
   for (const auto &pair : search_pattern) {
     search_string += pair.second;
   }
+
+  // search for the concatenated pattern
   EdlibAlignResult result =
       edlibAlign(search_string.c_str(), search_string.length(), seq.c_str(),
                  seq.length(), edlibConf);
@@ -196,7 +199,8 @@ Barcode get_barcode(
                       subpattern_ends.begin());
 
   std::vector<int> read_to_subpatterns;
-  read_to_subpatterns.reserve(subpattern_ends.size());
+  read_to_subpatterns.reserve(subpattern_ends.size() + 1);
+  read_to_subpatterns.emplace_back(barcode.flank_start);
 
   // initialise pointers
   int i_read = barcode.flank_start;
@@ -225,10 +229,7 @@ Barcode get_barcode(
 
   edlibFreeAlignResult(result);
 
-  // if not checking against known list of barcodes, return sequence after the
-  // primer also check for a perfect match straight up as this will save
-  // computer later.
-
+  // Work out the index of BC and UMI in the pattern
   int bc_index = -1, umi_index = -1;
   auto it_pattern =
       std::find_if(search_pattern.begin(), search_pattern.end(),
@@ -251,11 +252,11 @@ Barcode get_barcode(
     // error
   }
 
-  std::string exact_bc = seq.substr(
-      read_to_subpatterns[bc_index == 0 ? barcode.flank_start : (bc_index - 1)],
-      read_to_subpatterns[bc_index] -
-          read_to_subpatterns[bc_index == 0 ? barcode.flank_start
-                                            : (bc_index - 1)]);
+  // if not checking against known list of barcodes, return sequence after the
+  // primer also check for a perfect match straight up as this will save
+  // computer later.
+  std::string exact_bc = seq.substr(read_to_subpatterns[bc_index],
+                                    search_pattern[bc_index].second.length());
   if (known_barcodes.empty() ||
       (known_barcodes.find(exact_bc) != known_barcodes.end())) {
     barcode.barcode = exact_bc;
@@ -264,19 +265,15 @@ Barcode get_barcode(
     if (umi_index == -1) {
       barcode.umi = "";
     } else {
-      barcode.umi =
-          seq.substr(read_to_subpatterns[umi_index == 0 ? barcode.flank_start
-                                                        : (umi_index - 1)],
-                     search_pattern[umi_index].second.length());
+      barcode.umi = seq.substr(read_to_subpatterns[umi_index],
+                               search_pattern[umi_index].second.length());
     }
     return (barcode);
   }
 
   // otherwise widen our search space and the look for matches with errors
   std::string barcode_seq =
-      seq.substr(read_to_subpatterns[bc_index == 0 ? barcode.flank_start
-                                                   : (bc_index - 1)] -
-                     OFFSET,
+      seq.substr(read_to_subpatterns[bc_index] - OFFSET,
                  search_pattern[bc_index].second.length() + 2 * OFFSET);
 
   // iterate over all the known barcodes, checking each sequentially
@@ -292,10 +289,33 @@ Barcode get_barcode(
       barcode.unambiguous = true;
       barcode.editd = editDistance;
       barcode.barcode = known_bc;
-      barcode.umi =
-          seq.substr(read_to_subpatterns[0] - OFFSET + endDistance,
-                     search_pattern[umi_index]
-                         .second.length()); // assumes no error in UMI seq.
+      if (umi_index == -1) {
+        barcode.umi = "";
+      } else if (umi_index == bc_index + 1) {
+        // read_to_subpatterns[bc_index] - OFFSET: start of barcode_seq
+        //                                       + endDistance: end of barcode
+        //                                                    i.e. start of UMI
+        barcode.umi =
+            seq.substr(read_to_subpatterns[bc_index] - OFFSET + endDistance,
+                       search_pattern[umi_index]
+                           .second.length()); // assumes no error in UMI seq.
+      } else if (umi_index == bc_index - 1) {
+        // Use the start of BC according to edit_distance(barcode_seq, ...) and
+        // go backwords read_to_subpatterns[bc_index] - OFFSET + endDistance -
+        // search_pattern[bc_index].second.length():
+        //   start of BC
+        barcode.umi =
+            seq.substr(read_to_subpatterns[bc_index] - OFFSET + endDistance -
+                           search_pattern[bc_index].second.length() -
+                           search_pattern[umi_index].second.length(),
+                       search_pattern[umi_index].second.length());
+      } else {
+        // BC and UMI not next to eachother, grab UMI according to aligment
+        barcode.umi =
+            seq.substr(read_to_subpatterns[umi_index],
+                       search_pattern[umi_index]
+                           .second.length()); // assumes no error in UMI seq.
+      }
       if (editDistance == 0) { // if perfect match is found we're done.
         return (barcode);
       }

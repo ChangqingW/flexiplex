@@ -4,6 +4,9 @@ test_that("barcode_output_file_identical", {
   if (file.exists(bc_allow)){
     file.remove(bc_allow)
   }
+  if (file.exists(file.path(outdir, "out.fq"))){
+    file.remove(file.path(outdir, "out.fq"))
+  }
   R.utils::gunzip(
     filename = system.file("extdata/bc_allow.tsv.gz", package = "FLAMES"),
     destname = bc_allow, remove = FALSE

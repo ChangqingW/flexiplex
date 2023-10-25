@@ -92,6 +92,10 @@ test_that("flexiplex_performance", {
   if (file.exists(file.path(outdir, "stats.tsv"))) {
     file.remove(file.path(outdir, "stats.tsv"))
   }
+  if (file.exists("flexiplex_reads_barcodes.txt")) {
+    file.remove("flexiplex_reads_barcodes.txt")
+  }
+
   find_barcode(
     max_bc_editdistance = 2, max_flank_editdistance = 6,
     fastq = fasta,
@@ -108,6 +112,7 @@ test_that("flexiplex_performance", {
   )
 
   res <- read.delim(file.path(outdir, "stats.tsv"))
+  file.remove(file.path(outdir, "stats.tsv"))
   cat("UMI performance:")
   print(table(res$UMI == gsub("^.*_", "", res$Read)))
   cat("BC performance:")
@@ -117,9 +122,6 @@ test_that("flexiplex_performance", {
 
   # binary tests
   expect_true(file.exists(test_path("flexiplex-bin")))
-  if (file.exists("flexiplex_reads_barcodes.txt")) {
-    file.remove("flexiplex_reads_barcodes.txt")
-  }
   system2(
     command = file.path(".", test_path("flexiplex-bin")),
     args = c(
